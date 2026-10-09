@@ -181,6 +181,15 @@ if [[ "$KSU_BRANCH" == [kK] && "$APPLY_SUSFS" == [yY] ]]; then
 fi
 cd "$WORKDIR/kernel_workspace"
 
+# Keep SUSFS setprocattr behavior aligned with KernelSU df03912 / BakaSU 969de3d.
+if [[ "$APPLY_SUSFS" == [yY] && "$KSU_BRANCH" == [rRyYnNkK] ]]; then
+  cd "$WORKDIR/kernel_workspace/common"
+  SELINUX_FIX="$SCRIPT_DIR/../other_patch/susfs-selinux-permission-order.patch"
+  patch --dry-run --batch --forward --fuzz=0 -p1 < "$SELINUX_FIX"
+  patch --batch --forward --fuzz=0 -p1 < "$SELINUX_FIX"
+  cd "$WORKDIR/kernel_workspace"
+fi
+
 # ===== 应用 LZ4 & ZSTD 补丁 =====
 if [[ "$APPLY_LZ4" == "y" || "$APPLY_LZ4" == "Y" ]]; then
   echo ">>> 正在添加lz4 1.10.0 & zstd 1.5.7补丁..."

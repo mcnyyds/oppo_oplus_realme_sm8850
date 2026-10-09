@@ -315,6 +315,14 @@ jobs:
             patch -p1 -F 3 < 10_enable_susfs_for_ksu.patch || true
           fi
           
+      - name: 修复 SUSFS SELinux 权限检查顺序
+        if: inputs.susfs_enable && inputs.ksu_type != 'none'
+        run: |
+          curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/other_patch/susfs-selinux-permission-order.patch" -o "$RUNNER_TEMP/susfs-selinux-permission-order.patch"
+          cd kernel_workspace/common
+          patch --dry-run --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/susfs-selinux-permission-order.patch"
+          patch --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/susfs-selinux-permission-order.patch"
+
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
         run: |

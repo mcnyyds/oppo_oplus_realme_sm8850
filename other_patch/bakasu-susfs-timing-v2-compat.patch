@@ -1,0 +1,16 @@
+--- a/kernel/tools/susfs_compat.mk
++++ b/kernel/tools/susfs_compat.mk
+@@ -15,6 +15,9 @@
+ ccflags-y += -DKSU_COMPAT_HAS_SUSFS_INSTALL_SU_FD_DIRECT_CALL
+ endif
+ 
+-$(info -- $(REPO_NAME): susfs has NOT update with latest KernelSU source)
+-$(info -- $(REPO_NAME): Please wait simonpunk update)
+-$(error Please wait susfs update.)
+\ No newline at end of file
++# Local SUSFS adapter is validated against BakaSU fa12ffd's new helper ABI.
++ifeq ($(shell grep -q "SUSFS_SELINUX_TIMING_V2" $(srctree)/security/selinux/selinuxfs.c; echo $$?),0)
++$(info -- $(REPO_NAME): local SUSFS SELinux timing v2 adapter found)
++else
++$(error SUSFS SELinux timing v2 adapter missing; refusing incompatible build.)
++endif

@@ -1,4 +1,4 @@
-name: BakaSU + SUSFS SELinux修复版 6.12.23 GKI
+name: BakaSU + SUSFS SELinux时序修复V2 6.12.23 GKI
 
 env:
   TZ: Asia/Shanghai
@@ -6,6 +6,7 @@ env:
   KERNEL_VERSION: '6.12'
   SUB_VERSION: '23_gki'
   KERNEL_NAME: 'android16-5-ga8f88ad96df3-ab13929693-4k'
+  BAKASU_COMMIT: 'fa12ffde8244008e9afdb7ac0c1bb1bc1b06b95a'
   CCACHE_KEY: ccache-ecsv4-gki-6.12.23
 
 on:
@@ -264,11 +265,14 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "bakasu" ]]; then
             echo "正在配置BakaSU（由于SukiSU长期未维护无法正常编译，且BakaSU兼容sukisu管理器，故SukiSU源码仓库已重定向为bakasu）..."
-            curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s main
+            curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s "${{ env.BAKASU_COMMIT }}"
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@mcnyyds"' >> ./common/arch/arm64/configs/gki_defconfig
             cd ./KernelSU
+            test "$(git rev-parse HEAD)" = "${{ env.BAKASU_COMMIT }}"
+            curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/other_patch/bakasu-susfs-timing-v2-compat.patch" -o "$RUNNER_TEMP/bakasu-susfs-timing-v2-compat.patch"
+            patch --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/bakasu-susfs-timing-v2-compat.patch"
             # 生成自定义版本号（基于提交计数）, 失败时使用 114514
-            KSU_VERSION=$(expr $(git rev-list --count main) + 30700 2>/dev/null || echo 114514)
+            KSU_VERSION=$(expr $(git rev-list --count HEAD) + 30700 2>/dev/null || echo 114514)
             # 存储版本号到 GitHub 环境变量
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
@@ -322,13 +326,20 @@ jobs:
             patch -p1 -F 3 < 10_enable_susfs_for_ksu.patch || true
           fi
           
-      - name: 修复 SUSFS SELinux 权限检查顺序
+      - name: 修复 SUSFS SELinux 时序及同步解析接口
         if: inputs.susfs_enable && inputs.ksu_type != 'none'
         run: |
-          curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/other_patch/susfs-selinux-permission-order.patch" -o "$RUNNER_TEMP/susfs-selinux-permission-order.patch"
+          curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/other_patch/susfs-selinux-timing-v2.patch" -o "$RUNNER_TEMP/susfs-selinux-timing-v2.patch"
           cd kernel_workspace/common
-          patch --dry-run --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/susfs-selinux-permission-order.patch"
-          patch --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/susfs-selinux-permission-order.patch"
+          patch --dry-run --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/susfs-selinux-timing-v2.patch"
+          patch --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/susfs-selinux-timing-v2.patch"
+
+      - name: 验证 SELinux V2 拒绝路径与凭据检查
+        run: |
+          curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/tests/selinux-timing-harness.c" -o "$RUNNER_TEMP/selinux-timing-harness.c"
+          python3 -c 'from pathlib import Path; import os; s=Path("kernel_workspace/common/security/selinux/hooks.c").read_text(); a=s.index("static int my_setprocattr("); b=s.index("#endif // #ifdef CONFIG_KSU_SUSFS",a); Path(os.environ["RUNNER_TEMP"],"extracted-setprocattr.h").write_text(s[a:b])'
+          gcc -std=gnu11 -Wall -Wextra -Werror -I "$RUNNER_TEMP" "$RUNNER_TEMP/selinux-timing-harness.c" -o "$RUNNER_TEMP/selinux-timing-harness"
+          "$RUNNER_TEMP/selinux-timing-harness"
 
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
@@ -760,7 +771,7 @@ jobs:
           fi
           FIX_LABEL=""
           if [[ "${{ inputs.susfs_enable }}" == "true" && "${{ inputs.ksu_type }}" != "none" ]]; then
-            FIX_LABEL="susfs-selinux-fix"
+            FIX_LABEL="susfs-selinux-timing-v2"
             AK3_NAME="${AK3_NAME%.zip}_${FIX_LABEL}_${GITHUB_SHA:0:8}_run${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.zip"
           fi
           IMAGE_SHA256="$(sha256sum Image | cut -d' ' -f1)"
@@ -891,6 +902,7 @@ jobs:
           ### ⏫️ 更新内容：
           - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
           - SUSFS SELinux 修复标记：${{ needs.build.outputs.fix_label }}
+          - BakaSU 源码：`${{ env.BAKASU_COMMIT }}`
           - 构建分支：`${{ github.ref_name }}`
           - 构建提交：`${{ github.sha }}`
           - Image SHA256：`${{ needs.build.outputs.image_sha256 }}`

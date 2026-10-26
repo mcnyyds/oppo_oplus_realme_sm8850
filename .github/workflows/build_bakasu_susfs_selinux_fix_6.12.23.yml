@@ -1,4 +1,4 @@
-name: BakaSU + SUSFS SELinux时序修复V2 6.12.23 GKI
+name: BakaSU + CCTV18 SUSFS 上游同步版 6.12.23 GKI
 
 env:
   TZ: Asia/Shanghai
@@ -6,7 +6,8 @@ env:
   KERNEL_VERSION: '6.12'
   SUB_VERSION: '23_gki'
   KERNEL_NAME: 'android16-5-ga8f88ad96df3-ab13929693-4k'
-  BAKASU_COMMIT: 'fa12ffde8244008e9afdb7ac0c1bb1bc1b06b95a'
+  BAKASU_COMMIT: 'd5e9e025b8b49155f8014684d64c91742b465f65'
+  SUSFS_COMMIT: '5f236a7b573c5a21ad0e5871ee96b63b89486596'
   CCACHE_KEY: ccache-ecsv4-gki-6.12.23
 
 on:
@@ -265,12 +266,10 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "bakasu" ]]; then
             echo "正在配置BakaSU（由于SukiSU长期未维护无法正常编译，且BakaSU兼容sukisu管理器，故SukiSU源码仓库已重定向为bakasu）..."
-            curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s "${{ env.BAKASU_COMMIT }}"
+            curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/${{ env.BAKASU_COMMIT }}/kernel/setup.sh" | bash -s "${{ env.BAKASU_COMMIT }}"
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@mcnyyds"' >> ./common/arch/arm64/configs/gki_defconfig
             cd ./KernelSU
             test "$(git rev-parse HEAD)" = "${{ env.BAKASU_COMMIT }}"
-            curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/other_patch/bakasu-susfs-timing-v2-compat.patch" -o "$RUNNER_TEMP/bakasu-susfs-timing-v2-compat.patch"
-            patch --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/bakasu-susfs-timing-v2-compat.patch"
             # 生成自定义版本号（基于提交计数）, 失败时使用 114514
             KSU_VERSION=$(expr $(git rev-list --count HEAD) + 30700 2>/dev/null || echo 114514)
             # 存储版本号到 GitHub 环境变量
@@ -310,11 +309,14 @@ jobs:
           if [[ ${{ github.event.inputs.ksu_type }} != "none" ]]; then
             echo "正在添加susfs补丁..."
             git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git -C susfs4ksu fetch --depth=1 origin "${{ env.SUSFS_COMMIT }}"
+            git -C susfs4ksu checkout --detach "${{ env.SUSFS_COMMIT }}"
+            test "$(git -C susfs4ksu rev-parse HEAD)" = "${{ env.SUSFS_COMMIT }}"
             cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
             cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
             cd ./common
-            patch -p1 -F 3 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch --batch --fuzz=3 -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
             cd ..
           else
             echo "已选择无内置KernelSU模式，跳过susfs配置..."
@@ -326,18 +328,19 @@ jobs:
             patch -p1 -F 3 < 10_enable_susfs_for_ksu.patch || true
           fi
           
-      - name: 修复 SUSFS SELinux 时序及同步解析接口
+      - name: 将 CCTV18 SELinux 入口接入 BakaSU 上游实现
         if: inputs.susfs_enable && inputs.ksu_type != 'none'
         run: |
-          curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/other_patch/susfs-selinux-timing-v2.patch" -o "$RUNNER_TEMP/susfs-selinux-timing-v2.patch"
+          curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/other_patch/cctv18-bakasu-selinux-upstream.patch" -o "$RUNNER_TEMP/cctv18-bakasu-selinux-upstream.patch"
           cd kernel_workspace/common
-          patch --dry-run --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/susfs-selinux-timing-v2.patch"
-          patch --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/susfs-selinux-timing-v2.patch"
+          patch --dry-run --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/cctv18-bakasu-selinux-upstream.patch"
+          patch --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/cctv18-bakasu-selinux-upstream.patch"
 
-      - name: 验证 SELinux V2 拒绝路径与凭据检查
+      - name: 验证上游 SELinux 拒绝路径与 CCTV18 转接
         run: |
           curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/tests/selinux-timing-harness.c" -o "$RUNNER_TEMP/selinux-timing-harness.c"
-          python3 -c 'from pathlib import Path; import os; s=Path("kernel_workspace/common/security/selinux/hooks.c").read_text(); a=s.index("static int my_setprocattr("); b=s.index("#endif // #ifdef CONFIG_KSU_SUSFS",a); Path(os.environ["RUNNER_TEMP"],"extracted-setprocattr.h").write_text(s[a:b])'
+          curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/tests/prepare-selinux-upstream-test.py" -o "$RUNNER_TEMP/prepare-selinux-upstream-test.py"
+          python3 "$RUNNER_TEMP/prepare-selinux-upstream-test.py" kernel_workspace/common kernel_workspace/KernelSU "$RUNNER_TEMP/extracted-setprocattr.h"
           gcc -std=gnu11 -Wall -Wextra -Werror -I "$RUNNER_TEMP" "$RUNNER_TEMP/selinux-timing-harness.c" -o "$RUNNER_TEMP/selinux-timing-harness"
           "$RUNNER_TEMP/selinux-timing-harness"
 
@@ -699,6 +702,12 @@ jobs:
           export CC="$(pwd)/cc-wrapper" && export LD="$(pwd)/ld-wrapper" &&
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" OBJCOPY="llvm-objcopy" O=out Image
           
+          grep -qx 'CONFIG_KSU_SUSFS=y' out/.config
+          if grep -qx 'CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config; then
+            echo 'Unexpected tracepoint hook alongside SUSFS' >&2
+            exit 1
+          fi
+
           # 编译后时间劫持二次校验
           echo "--- 编译后环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
           echo "--- 编译后环境文件时间戳: ---"
@@ -771,7 +780,7 @@ jobs:
           fi
           FIX_LABEL=""
           if [[ "${{ inputs.susfs_enable }}" == "true" && "${{ inputs.ksu_type }}" != "none" ]]; then
-            FIX_LABEL="susfs-selinux-timing-v2"
+            FIX_LABEL="cctv18-susfs-upstream-v3"
             AK3_NAME="${AK3_NAME%.zip}_${FIX_LABEL}_${GITHUB_SHA:0:8}_run${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.zip"
           fi
           IMAGE_SHA256="$(sha256sum Image | cut -d' ' -f1)"
@@ -900,9 +909,10 @@ jobs:
           - KSU原版管理器下载：[KernelSU](https://github.com/tiann/KernelSU/releases)
           
           ### ⏫️ 更新内容：
-          - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
+          - 固定${{ env.KSU_TYPENAME }}至已记录源码版本（${{ needs.build.outputs.ksuver }}）
           - SUSFS SELinux 修复标记：${{ needs.build.outputs.fix_label }}
           - BakaSU 源码：`${{ env.BAKASU_COMMIT }}`
+          - CCTV18 SUSFS 源码：`${{ env.SUSFS_COMMIT }}`
           - 构建分支：`${{ github.ref_name }}`
           - 构建提交：`${{ github.sha }}`
           - Image SHA256：`${{ needs.build.outputs.image_sha256 }}`

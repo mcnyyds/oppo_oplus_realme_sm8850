@@ -9,17 +9,21 @@ start = source.index("int __nocfi ksu_handle_selinux_setprocattr(const char *nam
 start = source.index("\n{", start)
 end = source.index("\n}\n", start) + 3
 body = source[start:end]
+assert "#define ksu_handle_selinux_setprocattr my_setprocattr" in source
 header = """#define KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE 1
 #define KERNEL_VERSION(a,b,c) (((a)<<16)+((b)<<8)+(c))
 #define LINUX_VERSION_CODE KERNEL_VERSION(6,12,23)
 #define ksu_task_security_struct task_security_struct
 #define ksu_avc_has_perm_compat avc_has_perm
 #define ksu_security_bounded_transition_compat security_bounded_transition
-static int ksu_handle_selinux_setprocattr(const char *name, void *value, size_t size)
+static int driver_setprocattr(const char *name, void *value, size_t size)
 """ + body.replace("\n{", "\n{\n    (void)name;", 1)
 start = hooks.index("static int handle_selinux_setprocattr(")
 end = hooks.index("\n}\n", start) + 3
-header += hooks[start:end].replace("handle_selinux_setprocattr", "my_setprocattr", 1)
+wrapper = hooks[start:end]
+assert "return my_setprocattr(name, value, size);" in wrapper
+wrapper = wrapper.replace("return my_setprocattr(", "return driver_setprocattr(")
+header += wrapper.replace("handle_selinux_setprocattr", "my_setprocattr", 1)
 output.write_text(header, encoding="utf-8")
 assert "LSM_HOOK_INIT(setprocattr, handle_selinux_setprocattr)" in hooks
 native = hooks[hooks.index("static int selinux_lsm_setattr("):hooks.index("static int selinux_setselfattr(")]

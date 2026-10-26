@@ -7,7 +7,7 @@
 -extern struct selinux_policy *backup_sepolicy;
  extern bool ksu_selinux_hide_running __read_mostly;
 -extern int my_security_context_to_sid(struct selinux_policy *policy, const char *scontext, u32 scontext_len, u32 *sid, gfp_t gfp);
-+extern int ksu_handle_selinux_setprocattr(const char *name, void *value, size_t size);
++extern int my_setprocattr(const char *name, void *value, size_t size);
  #endif // #ifdef CONFIG_KSU_SUSFS
  
  /* SECMARK reference count */
@@ -48,7 +48,7 @@
 +static int handle_selinux_setprocattr(const char *name, void *value, size_t size)
 +{
 +    if (current_uid().val >= 10000 && ksu_selinux_hide_running && !strcmp(name, "current"))
-+        return ksu_handle_selinux_setprocattr(name, value, size);
++        return my_setprocattr(name, value, size);
 +    return selinux_setprocattr(name, value, size);
 +}
 +#endif

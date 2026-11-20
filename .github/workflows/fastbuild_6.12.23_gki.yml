@@ -6,6 +6,8 @@ env:
   KERNEL_VERSION: '6.12'
   SUB_VERSION: '23_gki'
   KERNEL_NAME: 'android16-5-ga8f88ad96df3-ab13929693-4k'
+  BAKASU_COMMIT: '7b65bde0710b5e7c6f755545cb15a4abd417f3a8'
+  SUSFS_COMMIT: '2ea91d1c37cc974b683d6ffbc2e913c3b728d1f5'
   CCACHE_KEY: ccache-ecsv4-gki-6.12.23
 
 on:
@@ -257,11 +259,12 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "bakasu" ]]; then
             echo "正在配置BakaSU（由于SukiSU长期未维护无法正常编译，且BakaSU兼容sukisu管理器，故SukiSU源码仓库已重定向为bakasu）..."
-            curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s main
+            curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/${{ env.BAKASU_COMMIT }}/kernel/setup.sh" | bash -s "${{ env.BAKASU_COMMIT }}"
             echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
             cd ./KernelSU
+            test "$(git rev-parse HEAD)" = "${{ env.BAKASU_COMMIT }}"
             # 生成自定义版本号（基于提交计数）, 失败时使用 114514
-            KSU_VERSION=$(expr $(git rev-list --count main) + 30700 2>/dev/null || echo 114514)
+            KSU_VERSION=$(expr $(git rev-list --count HEAD) + 30700 2>/dev/null || echo 114514)
             # 存储版本号到 GitHub 环境变量
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
@@ -299,11 +302,14 @@ jobs:
           if [[ ${{ github.event.inputs.ksu_type }} != "none" ]]; then
             echo "正在添加susfs补丁..."
             git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git -C susfs4ksu fetch --depth=1 origin "${{ env.SUSFS_COMMIT }}"
+            git -C susfs4ksu checkout --detach "${{ env.SUSFS_COMMIT }}"
+            test "$(git -C susfs4ksu rev-parse HEAD)" = "${{ env.SUSFS_COMMIT }}"
             cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
             cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
             cd ./common
-            patch -p1 -F 3 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch --batch -p1 -F 3 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
             cd ..
           else
             echo "已选择无内置KernelSU模式，跳过susfs配置..."
@@ -315,6 +321,15 @@ jobs:
             patch -p1 -F 3 < 10_enable_susfs_for_ksu.patch || true
           fi
           
+      - name: 补齐 BakaSU SUSFS 2.4 策略登记接口
+        if: inputs.susfs_enable && (inputs.ksu_type == 'bakasu' || inputs.ksu_type == 'sukisu')
+        run: |
+          curl -fLSs "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/other_patch/bakasu-susfs24-policy-registration.patch" -o "$RUNNER_TEMP/bakasu-susfs24-policy-registration.patch"
+          cd kernel_workspace/KernelSU
+          patch --dry-run --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/bakasu-susfs24-policy-registration.patch"
+          patch --batch --forward --fuzz=0 -p1 < "$RUNNER_TEMP/bakasu-susfs24-policy-registration.patch"
+          echo "POLICY_FIX=susfs24-policy-registration" >> "$GITHUB_ENV"
+
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
         run: |
@@ -743,6 +758,9 @@ jobs:
           else
             AK3_NAME=AnyKernel3_${KSU_TYPENAME}_${{ env.KSUVER }}_${{ env.KERNEL_VERSION }}_${{ env.KERNEL_NAME }}.zip
           fi
+          if [[ -n "${POLICY_FIX:-}" ]]; then
+            AK3_NAME="${AK3_NAME%.zip}_${POLICY_FIX}_${GITHUB_SHA:0:8}.zip"
+          fi
           zip -r ../$AK3_NAME ./*
           echo "ak3name=$AK3_NAME" >> $GITHUB_OUTPUT
           
@@ -760,6 +778,9 @@ jobs:
           echo "Branch: $GITHUB_REF_NAME" >> ./ak3.log
           echo "Run ID: $GITHUB_RUN_ID" >> ./ak3.log
           echo "Commit: $GITHUB_SHA" >> ./ak3.log
+          echo "Policy fix: ${POLICY_FIX:-none}" >> ./ak3.log
+          echo "BakaSU commit: ${{ env.BAKASU_COMMIT }}" >> ./ak3.log
+          echo "CCTV18 SUSFS commit: ${{ env.SUSFS_COMMIT }}" >> ./ak3.log
           echo "Time: $TIME_NOW" >> ./ak3.log
           echo "Kernel Ver: $FULL_VERSION" >> ./ak3.log
           echo "KSU Branch: ${KSU_TYPENAME}" >> ./ak3.log
@@ -865,7 +886,9 @@ jobs:
           
           ### ⏫️ 更新内容：
           - 更新${{ env.KSU_TYPENAME }}至最新版本（${{ needs.build.outputs.ksuver }}）
-          - (预留)
+          - 此分支为 BakaSU + CCTV18 SUSFS 2.4 策略登记兼容构建；修复仅在 BakaSU/SukiSU + SUSFS 时启用。
+          - BakaSU: `${{ env.BAKASU_COMMIT }}`；CCTV18 SUSFS: `${{ env.SUSFS_COMMIT }}`
+          - 构建提交：`${{ github.sha }}`
           
           ### 📋 安装方法 | Installation Guide
           1. 若你的手机已经安装了第三方Recovery（如TWRP)，可下载对应机型的AnyKernel刷机包后进入Recovery模式，通过Recovery刷入刷机包后重启设备；

@@ -260,7 +260,7 @@ jobs:
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" || ${{ github.event.inputs.ksu_type }} == "bakasu" ]]; then
             echo "正在配置BakaSU（由于SukiSU长期未维护无法正常编译，且BakaSU兼容sukisu管理器，故SukiSU源码仓库已重定向为bakasu）..."
             curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/${{ env.BAKASU_COMMIT }}/kernel/setup.sh" | bash -s "${{ env.BAKASU_COMMIT }}"
-            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@mcnyyds"' >> ./common/arch/arm64/configs/gki_defconfig
             cd ./KernelSU
             test "$(git rev-parse HEAD)" = "${{ env.BAKASU_COMMIT }}"
             # 生成自定义版本号（基于提交计数）, 失败时使用 114514
